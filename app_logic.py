@@ -240,8 +240,9 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
     The LLM outputs a structured JSON response.
     """
     prompt = f"""Analyze the following user message for its emotional tone and primary intent.
-    Emotional Tone: Categorize as 'Positive', 'Neutral', or 'Negative'.
+    Emotional Tone: Categorize as 'Very Negative', 'Negative', 'Neutral', 'Positive', or 'Very Positive'.
     Intent: Categorize from the following list: 'seeking_guidance', 'improvement', 'career_change', 'emotional_support', 'job_search', 'skill_development', 'workplace_issues', 'general_inquiry'.
+    It is CRUCIAL that you select the most appropriate emotional tone and intent from the provided lists based on the user's message. Do not default to 'Neutral' or 'general_inquiry' if a more specific category fits.
 
     User message: "{text}"
 
@@ -258,9 +259,13 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
     - User message: "I got the job! I'm so excited!"
       Output: {{"emotional_tone": "Positive", "intent": "general_inquiry"}}
     - User message: "I'm experiencing discrimination at work."
-      Output: {{"emotional_tone": "Negative", "intent": "workplace_issues"}}
+      Output: {{"emotional_tone": "Very Negative", "intent": "workplace_issues"}}
     - User message: "I need to learn Python for data analysis."
       Output: {{"emotional_tone": "Neutral", "intent": "skill_development"}}
+    - User message: "I'm feeling really depressed about my job scenario."
+      Output: {{"emotional_tone": "Very Negative", "intent": "emotional_support"}}
+    - User message: "My career feels stagnant - how do I identify new opportunities?"
+      Output: {{"emotional_tone": "Negative", "intent": "career_change"}}
     """
     
     messages = [
@@ -281,11 +286,17 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
 
         # Map emotional tone to a score for consistency (-1 to 1)
         emotional_score = 0.0
-        if analysis_result.get("emotional_tone", "").lower() == "positive":
+        tone_lower = analysis_result.get("emotional_tone", "").lower()
+        if tone_lower == "very positive":
             emotional_score = 1.0
-        elif analysis_result.get("emotional_tone", "").lower() == "negative":
+        elif tone_lower == "positive":
+            emotional_score = 0.7
+        elif tone_lower == "neutral":
+            emotional_score = 0.0
+        elif tone_lower == "negative":
+            emotional_score = -0.7
+        elif tone_lower == "very negative":
             emotional_score = -1.0
-        # For neutral, it remains 0.0
         
         return {"emotional_score": emotional_score, "intent": analysis_result.get("intent", "general_inquiry")}
 
@@ -347,9 +358,8 @@ def process_aisura_query(
         "user_intent": current_message_analysis["intent"] # Add to persona for prompt
     }
     
-    # Determine if resource link is needed
-    # Make resource provision more aggressive for all relevant intents
-    needs_resource = True # Always try to provide a resource, even if general
+    # Resource provision logic: Always provide a resource.
+    needs_resource = True
 
     # Initialize messages with enhanced system prompt
     messages = [
@@ -421,13 +431,16 @@ def process_aisura_query(
         
         ai_response = completion.choices[0].message.content
         
-        # Post-process response to add humble greeting, emotional balancing, and resources
-        ai_response = format_ai_response(ai_response, user_query, user_persona, detected_hesitation_from_js)
-        
-        # Always try to enhance with resources now
-        ai_response = enhance_response_with_resources(
+        # Now, the format_ai_response will ONLY add the link,
+        # the initial greeting and emotion/hesitation acknowledgment are handled by LLM.
+        final_ai_response_with_link = enhance_response_with_resources(
             ai_response, user_query, user_persona, resource_selector
         )
+        
+        # Ensure response does not exceed 150 words AFTER link addition
+        words = final_ai_response_with_link.split()
+        if len(words) > 150:
+            final_ai_response_with_link = " ".join(words[:150]) + "..." # Truncate if too long
         
         # Create display message for user
         user_display = user_query.strip()
@@ -437,7 +450,7 @@ def process_aisura_query(
         user_display += f"\n*Emotional tone: {current_message_analysis['emotional_score']:.2f}, Inferred intent: {current_message_analysis['intent']}*"
         
         new_user_message = {"role": "user", "content": user_display}
-        new_ai_message = {"role": "assistant", "content": ai_response}
+        new_ai_message = {"role": "assistant", "content": final_ai_response_with_link}
         
         updated_history = chat_history_list + [new_user_message, new_ai_message]
         return updated_history, session_emotional_scores, session_intent_scores
@@ -448,77 +461,66 @@ def process_aisura_query(
         return create_error_response(chat_history_list, combined_user_text, error_message), session_emotional_scores, session_intent_scores
 
 def create_dynamic_system_prompt(user_persona: Dict, behavioral_analysis: Dict, needs_resource: bool) -> str:
-    """Create a dynamic system prompt based on user's current state"""
+    """Create a dynamic system prompt based on user's current state."""
     
-    base_prompt = """You are AIShura, an advanced empathic AI assistant. Your core mission is to provide concise, precise, and emotionally intelligent guidance within a 150-word limit per response.
+    # Dynamically select the most relevant empathetic opening phrase based on emotional score
+    emotional_greeting_template = ""
+    if user_persona['user_emotional_score'] <= -0.5:
+        emotional_greeting_template = "I genuinely understand you're facing a tough moment, and it's completely okay to feel the way you do. I'm here to support you."
+    elif user_persona['user_emotional_score'] < 0:
+        emotional_greeting_template = "It's natural to encounter challenges, and I'm here to help you navigate through them."
+    elif user_persona['user_emotional_score'] >= 0.5:
+        emotional_greeting_template = "That's wonderful! I'm delighted to assist you and contribute to your positive journey."
+    else: # Neutral or slightly positive/negative
+        emotional_greeting_template = "I completely understand what you're looking for, and I'm ready to assist you on your professional journey."
+
+    # Add hesitation acknowledgment only if hesitation was detected
+    hesitation_acknowledgment = ""
+    if behavioral_analysis['confidence_level'] < 0.7 and behavioral_analysis['primary_emotional_state'] != "confident":
+        hesitation_acknowledgment = "Please know, I'm here to help you navigate through any uncertainty or difficulty you might be experiencing. "
+    
+    full_greeting_prefix = f"{emotional_greeting_template} {hesitation_acknowledgment}".strip()
+
+    base_prompt = f"""You are AIShura, an advanced empathic AI assistant. Your core mission is to provide concise, precise, and emotionally intelligent guidance within a 150-word limit per response.
 
 CRITICAL BEHAVIORAL & EMOTIONAL ADAPTATION PROTOCOL:
-- Current user emotional state: {emotional_state}
-- User confidence level (from typing): {confidence_level:.2f}/1.0
-- User emotional score (from LLM analysis): {user_emotional_score:.2f} (from -1.0 to 1.0)
-- Inferred user intent: {user_intent}
-- Recommended response style: {response_style}
-- Action readiness: {action_readiness}
+- Current user emotional state (from LLM analysis): {user_persona['user_emotional_score']:.2f} (from -1.0 to 1.0)
+- Inferred user intent (from LLM analysis): {user_persona['user_intent']}
+- User confidence level (from typing analysis): {behavioral_analysis['confidence_level']:.2f}/1.0
+- Primary behavioral state (from typing analysis): {behavioral_analysis['primary_emotional_state']}
+- Recommended response style: {behavioral_analysis['recommended_response_style']}
+- Action readiness: {behavioral_analysis['action_readiness']}
 
 USER PERSONA PROFILE:
-{persona_summary}
-
-RESPONSE GUIDELINES (STRICTLY ADHERE):
-1.  **Start:** Immediately begin with a **humble and empathetic statement** followed by an **emotional balancing greeting**. *DO NOT use "Hello", "Hi", or any generic salutation after this initial empathetic opening.*
-2.  **Core Advice:** Directly follow the greeting with precise, actionable advice.
-3.  **Conciseness:** Keep the total response strictly under 150 words.
-4.  **Adaptation:** Evolve to mirror their communication style and emotional state over the session.
-5.  **Hesitation:** If hesitation was detected, gently acknowledge it and offer reassurance within the initial greeting.
-6.  **Action Link:** Always include a relevant, actionable link at the end of your response, formatted as `[Actionable Title](https://example.com)`. If no specific resource matches, use a general professional development link.
-"""
-
-    # Fill in the template
-    persona_summary = f"""
 - Experience Level: {user_persona.get('experience_level', 'Not specified')}
 - Industry Focus: {user_persona.get('industry_focus', 'General')}
 - Core Goal: {user_persona.get('core_goal', 'Not specified')}
 - Main Challenge: {user_persona.get('main_challenge', 'Not specified')}
 - Key Strengths: {', '.join(user_persona.get('key_skills', []))}
 - Conversation Stage: {'Early' if user_persona.get('conversation_history_length', 0) < 4 else 'Established'}
-"""
 
-    return base_prompt.format(
-        emotional_state=behavioral_analysis['primary_emotional_state'],
-        confidence_level=behavioral_analysis['confidence_level'],
-        response_style=behavioral_analysis['recommended_response_style'],
-        action_readiness=behavioral_analysis['action_readiness'],
-        persona_summary=persona_summary,
-        user_emotional_score=user_persona['user_emotional_score'],
-        user_intent=user_persona['user_intent']
-    )
+RESPONSE GUIDELINES (STRICTLY ADHERE):
+1.  **Opening:** Start your response *immediately* with the following dynamic, empathetic greeting: "{full_greeting_prefix}"
+    *DO NOT use "Hello", "Hi", "I completely understand what you're looking for, and I'm ready to assist you. It's natural to have questions or seek guidance on your professional journey." or any other generic salutation or redundant emotional phrasing.*
+2.  **Core Advice:** Directly follow the opening with precise, actionable advice that directly addresses the user's query and inferred intent.
+3.  **Conciseness:** Keep the total response content (excluding the pre-defined opening phrase, but including the actionable link) strictly under 150 words.
+4.  **Adaptation:** Subtly adapt your tone and complexity to mirror their communication style, emotional state, and confidence level over the session.
+5.  **Action Link:** Always include one highly relevant, actionable link at the *very end* of your response, formatted as `[Actionable Title](https://example.com)`. This link should prompt the user to a next step. If no specific resource from our database perfectly matches, provide a general professional development resource.
+"""
+    return base_prompt
 
 def format_ai_response(response: str, user_query: str, user_persona: Dict, detected_hesitation_from_js: str) -> str:
     """
-    Constructs the initial humble gesture, emotional balancing statement,
-    and hesitation acknowledgment.
-    The LLM's response should directly follow this prefix.
+    This function no longer prepends the greeting. It now primarily ensures the LLM's
+    response is formatted and handles truncation before adding the resource link.
+    The dynamic greeting is now directly injected into the system prompt for the LLM to generate.
     """
+    # The LLM is now responsible for generating the initial empathetic greeting
+    # directly within its response based on the system prompt.
+    # This function just returns the LLM's response for further processing (like adding the link).
     
-    # Start with a humble gesture and emotional balancing statement
-    emotional_context = extract_emotion_context(user_query, user_persona)
-    initial_greeting = f"I completely understand what you're looking for, and I'm ready to assist you. It's natural to {emotional_context}. "
-
-    # Add hesitation acknowledgment if detected
-    if detected_hesitation_from_js != "The user is typing normally.":
-        # Avoid redundant acknowledgement if LLM already integrated it naturally
-        if not any(phrase in response.lower() for phrase in ["it's okay to feel", "take a deep breath", "it's normal to feel"]):
-            hesitation_acknowledgement = "Please know, I'm here to help you navigate through any uncertainty or difficulty. "
-            initial_greeting += hesitation_acknowledgement
-
-    # Combine the crafted initial greeting with the LLM's raw response
-    final_response = initial_greeting + response.lstrip() # Use lstrip to remove any leading whitespace from LLM's response
-
-    # Ensure response does not exceed 150 words after formatting
-    words = final_response.split()
-    if len(words) > 150:
-        final_response = " ".join(words[:150]) + "..." # Truncate if too long
-    
-    return final_response
+    # The length constraint will be handled after the link is appended.
+    return response
 
 def enhance_response_with_resources(response: str, user_query: str, user_persona: Dict, resource_selector: ResourceSelector) -> str:
     """Enhance AI response with contextually appropriate resources, embedded naturally."""
@@ -546,20 +548,19 @@ def enhance_response_with_resources(response: str, user_query: str, user_persona
 
 def extract_emotion_context(user_query: str, user_persona: Dict) -> str:
     """Extract emotional context for empathetic statements."""
+    # This function is now mainly used to provide context for the dynamic system prompt.
+    # The LLM will use this context to craft its own empathetic opening.
     query_lower = user_query.lower()
     
-    # Use Llama-derived emotional state more strongly
     llm_emotional_score = user_persona.get('user_emotional_score', 0.0)
     
-    if llm_emotional_score < -0.5 or "stressed" in query_lower or "anxious" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "anxious":
-        return "feel overwhelmed or anxious sometimes"
-    elif llm_emotional_score < 0 and llm_emotional_score >= -0.5 or "confused" in query_lower or "unsure" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "uncertain":
-        return "feel uncertain or seek clarity"
-    elif "stuck" in query_lower or "help" in query_lower:
-        return "feel stuck in a situation and need support"
-    elif llm_emotional_score > 0.5 or "excited" in query_lower or user_persona['current_emotional_state'].lower() == "excited":
-        return "feel excited about new opportunities"
-    else:
+    if llm_emotional_score <= -0.7:
+        return "feel deeply distressed or concerned"
+    elif llm_emotional_score < 0:
+        return "feel a bit overwhelmed or unsure"
+    elif llm_emotional_score >= 0.7:
+        return "feel enthusiastic and ready to progress"
+    else: # Neutral or slightly positive/negative
         return "have questions or seek guidance on your professional journey"
 
 
