@@ -274,7 +274,7 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
 
     try:
         completion = client.chat.completions.create(
-            model="meta-llama/llama-4-maverick:free",
+            model="deepseek/deepseek-r1-0528:free",
             messages=messages,
             max_tokens=100, # Keep it short for scoring
             temperature=0.1, # Keep it deterministic for scoring
