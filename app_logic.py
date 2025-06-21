@@ -129,13 +129,23 @@ class ResourceSelector:
                 "technical": "https://www.coursera.org/professional-certificates",
                 "leadership": "https://www.edx.org/learn/leadership",
                 "communication": "https://www.toastmasters.org/"
+            },
+            "workplace_issues": { # Added new category for workplace issues
+                "discrimination": "https://www.eeoc.gov/discrimination-type",
+                "stress_management": "https://www.apa.org/topics/stress/work",
+                "conflict_resolution": "https://hbr.org/2021/01/how-to-resolve-conflict-at-work"
+            },
+            "job_search": { # Added for job search specific resources
+                "remote_jobs": "https://weworkremotely.com/",
+                "ai_ml_jobs": "https://www.builtin.com/jobs/ai-ml",
+                "data_science_jobs": "https://www.datasciencecentral.com/jobs/"
             }
         }
     
     def select_optimal_resource(self, user_need: str, emotional_state: str, persona: Dict) -> Tuple[str, str, str]:
         """Select the most appropriate resource based on user's current state"""
-        category = self._categorize_need(user_need)
-        subcategory = self._select_subcategory(category, emotional_state, persona)
+        category = self._categorize_need(user_need, persona.get('user_intent', 'general_inquiry'))
+        subcategory = self._select_subcategory(category, emotional_state, persona, user_need)
         
         if category in self.resources and subcategory in self.resources[category]:
             url = self.resources[category][subcategory]
@@ -144,20 +154,25 @@ class ResourceSelector:
         
         return None, None, None
     
-    def _categorize_need(self, user_need: str) -> str:
+    def _categorize_need(self, user_need: str, user_intent: str) -> str:
         need_lower = user_need.lower()
-        if any(word in need_lower for word in ["resume", "cv", "portfolio"]):
+        if user_intent == "resume_improvement" or any(word in need_lower for word in ["resume", "cv", "portfolio"]):
             return "resume_improvement"
-        elif any(word in need_lower for word in ["interview", "preparation", "questions"]):
+        elif user_intent == "interview_prep" or any(word in need_lower for word in ["interview", "preparation", "questions"]):
             return "interview_prep"
-        elif any(word in need_lower for word in ["career", "transition", "change"]):
+        elif user_intent == "career_change" or any(word in need_lower for word in ["career", "transition", "change", "pivot"]):
             return "career_transition"
-        elif any(word in need_lower for word in ["skill", "learn", "develop"]):
+        elif user_intent == "skill_development" or any(word in need_lower for word in ["skill", "learn", "develop"]):
             return "skill_development"
+        elif user_intent == "workplace_issues" or any(word in need_lower for word in ["discrimination", "harassment", "stress", "conflict", "toxic"]):
+            return "workplace_issues"
+        elif user_intent == "job_search" or any(word in need_lower for word in ["job search", "remote jobs", "ai/ml jobs", "data science jobs"]):
+            return "job_search"
         else:
-            return "skill_development" # Default
+            return "skill_development" # Default to a broad category
     
-    def _select_subcategory(self, category: str, emotional_state: str, persona: Dict) -> str:
+    def _select_subcategory(self, category: str, emotional_state: str, persona: Dict, user_query: str) -> str:
+        user_query_lower = user_query.lower()
         if category == "resume_improvement":
             experience = persona.get("experience_level", "entry")
             if "senior" in experience or "executive" in experience:
@@ -185,7 +200,26 @@ class ResourceSelector:
                 return "leadership"
             else:
                 return "communication" # default
+        elif category == "workplace_issues":
+            if "discrimination" in user_query_lower:
+                return "discrimination"
+            elif "stress" in user_query_lower:
+                return "stress_management"
+            elif "conflict" in user_query_lower:
+                return "conflict_resolution"
+            else:
+                return "stress_management" # fallback
+        elif category == "job_search":
+            if "remote" in user_query_lower:
+                return "remote_jobs"
+            elif "ai" in user_query_lower or "ml" in user_query_lower:
+                return "ai_ml_jobs"
+            elif "data science" in user_query_lower:
+                return "data_science_jobs"
+            else:
+                return "remote_jobs" # fallback
         else:
+            # Fallback to first subcategory if specific match not found
             return list(self.resources[category].keys())[0]
     
     def _get_required_materials(self, category: str, subcategory: str) -> str:
@@ -193,7 +227,9 @@ class ResourceSelector:
             "resume_improvement": "Your current resume, job descriptions you're targeting, and a list of your key achievements.",
             "interview_prep": "Job description, company research notes, and your prepared STAR stories.",
             "career_transition": "Self-assessment of your skills, values clarification, and target industry research.",
-            "skill_development": "Learning goals, time commitment availability, and current skill assessment."
+            "skill_development": "Learning goals, time commitment availability, and current skill assessment.",
+            "workplace_issues": "Documentation of incidents, company policies, and notes on past actions taken.",
+            "job_search": "Your updated resume, cover letter, and clarity on desired role."
         }
         return materials_map.get(category, "Basic preparation materials.")
 
@@ -223,6 +259,8 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
       Output: {{"emotional_tone": "Positive", "intent": "general_inquiry"}}
     - User message: "I'm experiencing discrimination at work."
       Output: {{"emotional_tone": "Negative", "intent": "workplace_issues"}}
+    - User message: "I need to learn Python for data analysis."
+      Output: {{"emotional_tone": "Neutral", "intent": "skill_development"}}
     """
     
     messages = [
@@ -310,11 +348,9 @@ def process_aisura_query(
     }
     
     # Determine if resource link is needed
-    # More aggressively suggest resources for support or explicit needs
-    needs_resource = any(keyword in user_query.lower() for keyword in 
-                        ["help", "guide", "how to", "resources", "learn", "improve", "tips", "solution", "advise", "support"]) or \
-                   current_message_analysis["intent"] in ["seeking_guidance", "improvement", "job_search", "skill_development", "workplace_issues"]
-    
+    # Make resource provision more aggressive for all relevant intents
+    needs_resource = True # Always try to provide a resource, even if general
+
     # Initialize messages with enhanced system prompt
     messages = [
         {
@@ -388,10 +424,10 @@ def process_aisura_query(
         # Post-process response to add humble greeting, emotional balancing, and resources
         ai_response = format_ai_response(ai_response, user_query, user_persona, detected_hesitation_from_js)
         
-        if needs_resource:
-            ai_response = enhance_response_with_resources(
-                ai_response, user_query, user_persona, resource_selector
-            )
+        # Always try to enhance with resources now
+        ai_response = enhance_response_with_resources(
+            ai_response, user_query, user_persona, resource_selector
+        )
         
         # Create display message for user
         user_display = user_query.strip()
@@ -433,15 +469,8 @@ RESPONSE GUIDELINES (STRICTLY ADHERE):
 3.  **Conciseness:** Keep the total response strictly under 150 words.
 4.  **Adaptation:** Evolve to mirror their communication style and emotional state over the session.
 5.  **Hesitation:** If hesitation was detected, gently acknowledge it and offer reassurance within the initial greeting.
+6.  **Action Link:** Always include a relevant, actionable link at the end of your response, formatted as `[Actionable Title](https://example.com)`. If no specific resource matches, use a general professional development link.
 """
-
-    if needs_resource:
-        base_prompt += """
-6.  **RESOURCE SHARING PROTOCOL (MANDATORY EMBEDDED FORMAT):**
-    Integrate *one* highly relevant external resource naturally and precisely within your response, preferably near the end. The link MUST be directly embedded, followed by required materials, and a clear call to action.
-
-    Example:
-    "I completely understand how you're feeling about navigating career uncertainty, and it's perfectly normal to seek clarity. I'm here to help. This [Career Transition Guide](https://example.com/guide) might offer a helpful pathway. It usually requires a self-assessment and target industry research. Would exploring this guide be a good next step for you?" """
 
     # Fill in the template
     persona_summary = f"""
@@ -494,29 +523,26 @@ def format_ai_response(response: str, user_query: str, user_persona: Dict, detec
 def enhance_response_with_resources(response: str, user_query: str, user_persona: Dict, resource_selector: ResourceSelector) -> str:
     """Enhance AI response with contextually appropriate resources, embedded naturally."""
     
-    # Select optimal resource
+    # Select optimal resource based on user intent and emotional state
     url, materials, category = resource_selector.select_optimal_resource(
         user_query, 
         user_persona['behavioral_state']['primary_emotional_state'], # Use the derived emotional state
         user_persona
     )
     
-    if url:
-        resource_title = format_resource_title(category)
-        # Integrate the link directly into the response in a conversational way
-        resource_phrase = f"This [{resource_title}]({url}) might offer a helpful pathway. It usually requires {materials.lower().strip('.')}. Would exploring this resource be a good next step for you?"
-        
-        # Try to find a good insertion point. Append if no link is found.
-        # This will always try to add a resource if needed_resource is true and a URL is found.
-        if "http" not in response and "[" not in response and "](" not in response:
-            # Find a good place to insert, e.g., after a period, or at the end
-            last_sentence_end = response.rfind('.')
-            if last_sentence_end != -1 and len(response) - last_sentence_end < 50: # If last sentence is short
-                return response[:last_sentence_end+1] + " " + resource_phrase + response[last_sentence_end+1:]
-            else: # Append if no suitable short last sentence or no period
-                return response.strip() + " " + resource_phrase
+    # Fallback to a general professional development link if no specific match
+    if not url:
+        url = "https://www.linkedin.com/learning/"
+        materials = "continuous learning and skill development"
+        category = "General Professional Development"
+
+    resource_title = format_resource_title(category)
+    # Integrate the link directly into the response in a conversational way
+    resource_phrase = f"\n\nTo help you further, this [{resource_title}]({url}) offers {materials.lower().strip('.')}. Would you like to explore this resource?"
     
-    return response
+    # Always append the resource phrase
+    return response.strip() + resource_phrase
+
 
 def extract_emotion_context(user_query: str, user_persona: Dict) -> str:
     """Extract emotional context for empathetic statements."""
@@ -543,7 +569,10 @@ def format_resource_title(category: str) -> str:
         "career_transition": "Career Transition Guide",
         "resume_improvement": "Resume Enhancement Guide",
         "interview_prep": "Interview Preparation Guide",
-        "skill_development": "Skill Development Resources"
+        "skill_development": "Skill Development Resources",
+        "workplace_issues": "Workplace Support Resources",
+        "job_search": "Job Search Acceleration Guide",
+        "General Professional Development": "Professional Development Resources" # For fallback
     }
     return titles.get(category, "Professional Development Guide")
 
