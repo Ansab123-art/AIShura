@@ -4,7 +4,6 @@ import json
 import re
 from openai import OpenAI
 from typing import Dict, List, Tuple, Any
-from transformers import pipeline # Using transformers for sentiment analysis for emotional scoring
 
 # --- Configuration ---
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
@@ -13,19 +12,16 @@ if not OPENROUTER_API_KEY:
     print("WARNING: OPENROUTER_API_KEY environment variable not set. Please set it for the app to function correctly.")
 
 # OpenRouter API Client Initialization
+# Ensure the client is accessible where needed
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=OPENROUTER_API_KEY,
 )
 
-# Initialize sentiment analysis pipeline for emotional scoring
-# This is a pre-trained model for sentiment analysis.
-# For production, consider fine-tuning a model or using a more robust NLP service.
-sentiment_analyzer = pipeline("sentiment-analysis")
-
 # --- Advanced Hesitation Analysis ---
 class HesitationAnalyzer:
     def __init__(self):
+        # Behavioral patterns are conceptual for the AI's understanding
         self.behavioral_patterns = {
             "high_anxiety": ["multiple_deletions", "long_pauses", "repeated_rewrites"],
             "uncertainty": ["backtracking", "incomplete_thoughts", "question_marks"],
@@ -35,53 +31,58 @@ class HesitationAnalyzer:
         }
 
     def analyze_hesitation_pattern(self, hesitation_data: str, user_input: str, chat_history: List) -> Dict:
-        """Advanced analysis of user's behavioral patterns, simplified for this example."""
+        """
+        Analyzes user's behavioral patterns based on simulated hesitation data.
+        In a full Streamlit app, real-time JS would feed more accurate data.
+        For demonstration, this uses a simplified parsing of the `hesitation_data` string.
+        """
         analysis = {
             "primary_emotional_state": "neutral",
-            "confidence_level": 0.5,
+            "confidence_level": 0.5, # Default
             "recommended_response_style": "supportive",
             "action_readiness": "medium",
             "personalization_adjustments": {}
         }
-
+        
         hesitation_data_lower = hesitation_data.lower()
 
-        if "high anxiety" in hesitation_data_lower or "extensive self-correction" in hesitation_data_lower:
-            analysis["primary_emotional_state"] = "anxious"
+        # Update confidence based on reported patterns
+        if "low confidence" in hesitation_data_lower:
             analysis["confidence_level"] = 0.2
+            analysis["primary_emotional_state"] = "anxious"
             analysis["recommended_response_style"] = "calming_empathic"
             analysis["action_readiness"] = "low"
-        elif "deep contemplation" in hesitation_data_lower:
-            analysis["primary_emotional_state"] = "contemplative"
-            analysis["confidence_level"] = 0.6
-            analysis["recommended_response_style"] = "thought_provoking"
-            analysis["action_readiness"] = "medium"
-        elif "perfectionist tendencies" in hesitation_data_lower:
-            analysis["primary_emotional_state"] = "perfectionist"
-            analysis["confidence_level"] = 0.7
-            analysis["recommended_response_style"] = "precise_detailed"
-            analysis["action_readiness"] = "high"
-        elif "uncertainty" in hesitation_data_lower:
-            analysis["primary_emotional_state"] = "uncertain"
-            analysis["confidence_level"] = 0.4
-            analysis["recommended_response_style"] = "guiding"
-            analysis["action_readiness"] = "medium"
-        elif "confident expression" in hesitation_data_lower:
-            analysis["primary_emotional_state"] = "confident"
+        elif "high confidence" in hesitation_data_lower:
             analysis["confidence_level"] = 0.9
+            analysis["primary_emotional_state"] = "confident"
             analysis["recommended_response_style"] = "direct_actionable"
             analysis["action_readiness"] = "high"
-        
-        # Further refine based on user input
+        elif "medium confidence" in hesitation_data_lower:
+            analysis["confidence_level"] = 0.6
+            analysis["primary_emotional_state"] = "reflective"
+            analysis["recommended_response_style"] = "thought_provoking"
+            analysis["action_readiness"] = "medium"
+
+        # Further refine based on emotional state detected by the AI
+        if "anxious" in hesitation_data_lower:
+            analysis["primary_emotional_state"] = "anxious"
+            analysis["recommended_response_style"] = "calming_empathic"
+            analysis["action_readiness"] = "low"
+        elif "uncertain" in hesitation_data_lower:
+            analysis["primary_emotional_state"] = "uncertain"
+            analysis["recommended_response_style"] = "guiding"
+            analysis["action_readiness"] = "medium"
+        elif "perfectionist" in hesitation_data_lower:
+            analysis["primary_emotional_state"] = "perfectionist"
+            analysis["recommended_response_style"] = "precise_detailed"
+            analysis["action_readiness"] = "high"
+
+        # Additional adjustments based on user input length/keywords
         if len(user_input) < 10:
-            analysis["confidence_level"] = max(0.1, analysis["confidence_level"] - 0.2)
+            analysis["confidence_level"] = max(0.1, analysis["confidence_level"] - 0.1)
             analysis["recommended_response_style"] = "encouraging"
         elif "help" in user_input.lower() or "?" in user_input:
-            analysis["primary_emotional_state"] = "seeking_guidance"
-            analysis["action_readiness"] = "high"
-        elif len(user_input) > 100:
-            analysis["confidence_level"] = min(0.9, analysis["confidence_level"] + 0.1)
-            analysis["recommended_response_style"] = "detailed"
+            analysis["action_readiness"] = "high" # User is actively seeking next steps
             
         return analysis
 
@@ -154,8 +155,7 @@ class ResourceSelector:
         elif any(word in need_lower for word in ["skill", "learn", "develop"]):
             return "skill_development"
         else:
-            # Default to skill development if no clear category
-            return "skill_development"
+            return "skill_development" # Default
     
     def _select_subcategory(self, category: str, emotional_state: str, persona: Dict) -> str:
         if category == "resume_improvement":
@@ -186,7 +186,6 @@ class ResourceSelector:
             else:
                 return "communication" # default
         else:
-            # Fallback to first subcategory if specific match not found
             return list(self.resources[category].keys())[0]
     
     def _get_required_materials(self, category: str, subcategory: str) -> str:
@@ -198,37 +197,53 @@ class ResourceSelector:
         }
         return materials_map.get(category, "Basic preparation materials.")
 
-# --- Emotional and Intent Scoring ---
-def analyze_emotional_intent(text: str) -> Dict:
+# --- Emotional and Intent Scoring using Llama 4 ---
+def analyze_emotional_intent_with_llama(text: str) -> Dict:
     """
-    Analyzes the emotional tone and attempts to infer user intent from text.
-    Uses a simple sentiment analysis model for emotional scoring.
-    Intent detection is rule-based for this example.
+    Analyzes the emotional tone and infers user intent from text using Llama 4.
+    The LLM outputs a structured JSON response.
     """
-    emotional_score = 0.0 # -1 for negative, 0 for neutral, 1 for positive
-    sentiment_results = sentiment_analyzer(text)
-    if sentiment_results:
-        label = sentiment_results[0]['label']
-        score = sentiment_results[0]['score']
-        if label == 'POSITIVE':
-            emotional_score = score
-        elif label == 'NEGATIVE':
-            emotional_score = -score
-        else: # Neutral
-            emotional_score = 0.0
+    prompt = f"""Analyze the following user message for its emotional tone (Positive, Neutral, Negative) and primary intent (e.g., seeking_guidance, improvement, career_change, emotional_support, general_inquiry).
 
-    intent = "general_inquiry"
-    text_lower = text.lower()
-    if any(keyword in text_lower for keyword in ["help", "guide", "how to", "struggle"]):
-        intent = "seeking_guidance"
-    elif any(keyword in text_lower for keyword in ["improve", "enhance", "optimize"]):
-        intent = "improvement"
-    elif any(keyword in text_lower for keyword in ["change", "transition", "pivot"]):
-        intent = "career_change"
-    elif any(keyword in text_lower for keyword in ["anxious", "nervous", "overwhelmed", "stressed"]):
-        intent = "emotional_support"
+User message: "{text}"
+
+Provide the output as a JSON object with 'emotional_tone' and 'intent' keys.
+Example for an anxious user: {{"emotional_tone": "Negative", "intent": "emotional_support"}}
+Example for a user seeking career advice: {{"emotional_tone": "Neutral", "intent": "seeking_guidance"}}
+Example for a user excited about a new job: {{"emotional_tone": "Positive", "intent": "general_inquiry"}}
+"""
     
-    return {"emotional_score": emotional_score, "intent": intent}
+    messages = [
+        {"role": "user", "content": prompt}
+    ]
+
+    try:
+        completion = client.chat.completions.create(
+            model="meta-llama/llama-4-maverick:free",
+            messages=messages,
+            max_tokens=100, # Keep it short for scoring
+            temperature=0.1, # Keep it deterministic for scoring
+            response_model={"type": "object", "properties": {"emotional_tone": {"type": "string"}, "intent": {"type": "string"}}},
+            response_format={"type": "json_object"}
+        )
+        
+        response_json_str = completion.choices[0].message.content
+        analysis_result = json.loads(response_json_str)
+
+        # Map emotional tone to a score for consistency (-1 to 1)
+        emotional_score = 0.0
+        if analysis_result.get("emotional_tone", "").lower() == "positive":
+            emotional_score = 1.0
+        elif analysis_result.get("emotional_tone", "").lower() == "negative":
+            emotional_score = -1.0
+        
+        return {"emotional_score": emotional_score, "intent": analysis_result.get("intent", "general_inquiry")}
+
+    except Exception as e:
+        print(f"Error analyzing emotional intent with Llama 4: {e}")
+        # Fallback to default if LLM call fails
+        return {"emotional_score": 0.0, "intent": "general_inquiry"}
+
 
 # --- Core AIShura Logic ---
 def process_aisura_query(
@@ -264,8 +279,8 @@ def process_aisura_query(
         detected_hesitation_from_js, user_query, chat_history_list
     )
 
-    # Perform emotional and intent scoring for the current user query
-    current_message_analysis = analyze_emotional_intent(user_query)
+    # Perform emotional and intent scoring for the current user query using Llama 4
+    current_message_analysis = analyze_emotional_intent_with_llama(user_query)
     session_emotional_scores.append(current_message_analysis["emotional_score"])
     session_intent_scores.append(current_message_analysis["intent"])
     
@@ -329,6 +344,7 @@ def process_aisura_query(
             return create_error_response(chat_history_list, combined_user_text, error_msg), session_emotional_scores, session_intent_scores
 
     if not current_user_content_parts:
+        # If no query and no image, just return current state
         return chat_history_list, session_emotional_scores, session_intent_scores
 
     messages.append({
@@ -346,7 +362,7 @@ def process_aisura_query(
                 "HTTP-Referer": "https://aisura-demo.com",
                 "X-Title": "AIShura - Empathic AI Assistant",
             },
-            model="meta-llama/llama-4-maverick:free", # Using Llama-4-Maverick
+            model="meta-llama/llama-4-maverick:free", # Using Llama-4-Maverick for main response
             messages=messages,
             max_tokens=150, # Response should not exceed 150 words
             temperature=0.7 + (0.2 * behavioral_analysis['confidence_level']),  # Dynamic temperature
@@ -356,7 +372,7 @@ def process_aisura_query(
         ai_response = completion.choices[0].message.content
         
         # Post-process response to add humble greeting, emotional balancing, and resources
-        ai_response = format_ai_response(ai_response, user_query, user_persona)
+        ai_response = format_ai_response(ai_response, user_query, user_persona, detected_hesitation_from_js)
         
         if needs_resource:
             ai_response = enhance_response_with_resources(
@@ -365,9 +381,10 @@ def process_aisura_query(
         
         # Create display message for user
         user_display = user_query.strip()
+        # Ensure that detected_hesitation_from_js is displayed if it's not the default
         if detected_hesitation_from_js != "The user is typing normally.":
-            user_display += f"\n\n*Behavioral pattern: {format_hesitation_for_display(detected_hesitation_from_js, behavioral_analysis)}*"
-            user_display += f"\n*Emotional tone: {current_message_analysis['emotional_score']:.2f}, Inferred intent: {current_message_analysis['intent']}*"
+             user_display += f"\n\n*Behavioral pattern: {detected_hesitation_from_js}*"
+        user_display += f"\n*Emotional tone: {current_message_analysis['emotional_score']:.2f}, Inferred intent: {current_message_analysis['intent']}*"
         
         new_user_message = {"role": "user", "content": user_display}
         new_ai_message = {"role": "assistant", "content": ai_response}
@@ -377,6 +394,7 @@ def process_aisura_query(
         
     except Exception as e:
         error_message = f"An error occurred while communicating with AIShura: {e}"
+        print(f"Full error: {e}") # Log full error for debugging
         return create_error_response(chat_history_list, combined_user_text, error_message), session_emotional_scores, session_intent_scores
 
 def create_dynamic_system_prompt(user_persona: Dict, behavioral_analysis: Dict, needs_resource: bool) -> str:
@@ -386,8 +404,8 @@ def create_dynamic_system_prompt(user_persona: Dict, behavioral_analysis: Dict, 
 
 CRITICAL BEHAVIORAL & EMOTIONAL ADAPTATION PROTOCOL:
 - Current user emotional state: {emotional_state}
-- User confidence level (from typing): {confidence_level}/1.0
-- User emotional score (from sentiment analysis): {user_emotional_score:.2f} (from -1.0 to 1.0)
+- User confidence level (from typing): {confidence_level:.2f}/1.0
+- User emotional score (from LLM analysis): {user_emotional_score:.2f} (from -1.0 to 1.0)
 - Inferred user intent: {user_intent}
 - Recommended response style: {response_style}
 - Action readiness: {action_readiness}
@@ -402,7 +420,7 @@ Based on the user's behavioral patterns, emotional state, and inferred intent, y
 3. Keep responses strictly under 150 words.
 4. Gradually evolve to mirror their communication style and emotional state over the session.
 5. Prioritize resources they can emotionally handle and are most relevant to their current intent and confidence level.
-6. If the user showed hesitation (pauses, deletions, rewrites), acknowledge it gently and offer reassurance.
+6. If hesitation was detected, acknowledge it gently and offer reassurance.
 """
 
     if needs_resource:
@@ -434,32 +452,35 @@ Example:
         user_intent=user_persona['user_intent']
     )
 
-def format_ai_response(response: str, user_query: str, user_persona: Dict) -> str:
-    """Add humble greeting and emotional balancing statement."""
+def format_ai_response(response: str, user_query: str, user_persona: Dict, detected_hesitation_from_js: str) -> str:
+    """Add humble greeting, emotional balancing statement, and hesitation acknowledgment."""
     
-    hesitation_detected = user_persona['behavioral_state']['confidence_level'] < 0.7 or \
-                          user_persona['behavioral_state']['primary_emotional_state'] in ["anxious", "uncertain"]
-    
-    greeting = ""
-    if hesitation_detected:
-        greeting = "It's perfectly okay to feel a bit unsure, and I'm genuinely here to help you navigate through it. "
-    else:
-        greeting = "I completely understand what you're looking for, and I'm ready to assist you. "
-    
-    # Add a balancing emotional statement
-    emotional_context = extract_emotion_context(user_query, user_persona)
-    balancing_statement = f"It's natural to {emotional_context}. "
+    hesitation_acknowledged = False
+    if detected_hesitation_from_js != "The user is typing normally.":
+        # Check if the AI already incorporated a hesitation acknowledgement
+        # This is a heuristic, adjust as needed based on observed AI behavior
+        if "understand you're feeling" not in response.lower() and \
+           "it's okay to feel" not in response.lower() and \
+           "taking a deep breath" not in response.lower():
+            
+            hesitation_acknowledgement = f"It's perfectly okay to feel a bit unsure, and I'm genuinely here to help you navigate through it. "
+            response = hesitation_acknowledgement + response
+            hesitation_acknowledged = True
 
-    # Combine them at the beginning
-    final_response = f"{greeting}{balancing_statement}{response}"
+    # Combine humble greeting and emotional balancing statement at the very beginning
+    emotional_context = extract_emotion_context(user_query, user_persona)
+    greeting = f"I completely understand what you're looking for, and I'm ready to assist you. It's natural to {emotional_context}. "
+    
+    # Prepend greeting only if it hasn't been added already or AI hasn't naturally started with something similar
+    if not (response.lower().startswith("i completely understand") or response.lower().startswith("hello")):
+         response = greeting + response
 
     # Ensure response does not exceed 150 words after formatting
-    words = final_response.split()
+    words = response.split()
     if len(words) > 150:
-        final_response = " ".join(words[:150]) + "..." # Truncate if too long
+        response = " ".join(words[:150]) + "..." # Truncate if too long
     
-    return final_response
-
+    return response
 
 def enhance_response_with_resources(response: str, user_query: str, user_persona: Dict, resource_selector: ResourceSelector) -> str:
     """Enhance AI response with contextually appropriate resources, embedded naturally."""
@@ -487,16 +508,20 @@ def extract_emotion_context(user_query: str, user_persona: Dict) -> str:
     """Extract emotional context for empathetic statements."""
     query_lower = user_query.lower()
     
-    if "stressed" in query_lower or "anxious" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "anxious":
+    # Use Llama-derived emotional state more strongly
+    llm_emotional_score = user_persona.get('user_emotional_score', 0.0)
+    
+    if llm_emotional_score < -0.5 or "stressed" in query_lower or "anxious" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "anxious":
         return "feel overwhelmed or anxious sometimes"
-    elif "confused" in query_lower or "unsure" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "uncertain":
+    elif llm_emotional_score < 0 and llm_emotional_score >= -0.5 or "confused" in query_lower or "unsure" in query_lower or user_persona['behavioral_state']['primary_emotional_state'] == "uncertain":
         return "feel uncertain or seek clarity"
     elif "stuck" in query_lower or "help" in query_lower:
         return "feel stuck in a situation and need support"
-    elif "excited" in query_lower or user_persona['current_emotional_state'].lower() == "excited":
+    elif llm_emotional_score > 0.5 or "excited" in query_lower or user_persona['current_emotional_state'].lower() == "excited":
         return "feel excited about new opportunities"
     else:
         return "have questions or seek guidance on your professional journey"
+
 
 def format_resource_title(category: str) -> str:
     """Format resource titles for display."""
@@ -510,15 +535,8 @@ def format_resource_title(category: str) -> str:
 
 def format_hesitation_for_display(hesitation_data: str, behavioral_analysis: Dict) -> str:
     """Format hesitation data for user-friendly display."""
-    state = behavioral_analysis['primary_emotional_state']
-    confidence = behavioral_analysis['confidence_level']
-    
-    if confidence < 0.4:
-        return f"Thoughtful consideration detected - {state} state (low confidence)"
-    elif confidence > 0.7:
-        return f"Confident input pattern - {state} state (high confidence)"
-    else:
-        return f"Reflective input pattern - {state} state (medium confidence)"
+    # This function is now more of a passthrough as hesitation_data should be descriptive from the UI.
+    return hesitation_data
 
 def create_error_response(chat_history: List, user_text: str, error_msg: str) -> List:
     """Create consistent error response format."""
