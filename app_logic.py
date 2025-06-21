@@ -203,15 +203,27 @@ def analyze_emotional_intent_with_llama(text: str) -> Dict:
     Analyzes the emotional tone and infers user intent from text using Llama 4.
     The LLM outputs a structured JSON response.
     """
-    prompt = f"""Analyze the following user message for its emotional tone (Positive, Neutral, Negative) and primary intent (e.g., seeking_guidance, improvement, career_change, emotional_support, general_inquiry).
+    prompt = f"""Analyze the following user message for its emotional tone and primary intent.
+    Emotional Tone: Categorize as 'Positive', 'Neutral', or 'Negative'.
+    Intent: Categorize from the following list: 'seeking_guidance', 'improvement', 'career_change', 'emotional_support', 'job_search', 'skill_development', 'workplace_issues', 'general_inquiry'.
 
-User message: "{text}"
+    User message: "{text}"
 
-Provide the output as a JSON object with 'emotional_tone' and 'intent' keys.
-Example for an anxious user: {{"emotional_tone": "Negative", "intent": "emotional_support"}}
-Example for a user seeking career advice: {{"emotional_tone": "Neutral", "intent": "seeking_guidance"}}
-Example for a user excited about a new job: {{"emotional_tone": "Positive", "intent": "general_inquiry"}}
-"""
+    Provide the output as a JSON object with 'emotional_tone' and 'intent' keys.
+    Examples:
+    - User message: "I'm feeling really stressed about my current job situation"
+      Output: {{"emotional_tone": "Negative", "intent": "emotional_support"}}
+    - User message: "I want to go with job search"
+      Output: {{"emotional_tone": "Neutral", "intent": "job_search"}}
+    - User message: "I'm mainly looking for remote jobs in AI/ML and Data Science, till now I've been using LinkedIn but didn't get any good response."
+      Output: {{"emotional_tone": "Negative", "intent": "job_search"}}
+    - User message: "How do I improve my resume for a tech job?"
+      Output: {{"emotional_tone": "Neutral", "intent": "improvement"}}
+    - User message: "I got the job! I'm so excited!"
+      Output: {{"emotional_tone": "Positive", "intent": "general_inquiry"}}
+    - User message: "I'm experiencing discrimination at work."
+      Output: {{"emotional_tone": "Negative", "intent": "workplace_issues"}}
+    """
     
     messages = [
         {"role": "user", "content": prompt}
@@ -223,7 +235,6 @@ Example for a user excited about a new job: {{"emotional_tone": "Positive", "int
             messages=messages,
             max_tokens=100, # Keep it short for scoring
             temperature=0.1, # Keep it deterministic for scoring
-            response_model={"type": "object", "properties": {"emotional_tone": {"type": "string"}, "intent": {"type": "string"}}},
             response_format={"type": "json_object"}
         )
         
@@ -236,6 +247,7 @@ Example for a user excited about a new job: {{"emotional_tone": "Positive", "int
             emotional_score = 1.0
         elif analysis_result.get("emotional_tone", "").lower() == "negative":
             emotional_score = -1.0
+        # For neutral, it remains 0.0
         
         return {"emotional_score": emotional_score, "intent": analysis_result.get("intent", "general_inquiry")}
 
@@ -298,8 +310,10 @@ def process_aisura_query(
     }
     
     # Determine if resource link is needed
+    # More aggressively suggest resources for support or explicit needs
     needs_resource = any(keyword in user_query.lower() for keyword in 
-                        ["help", "guide", "how to", "resources", "learn", "improve", "tips"])
+                        ["help", "guide", "how to", "resources", "learn", "improve", "tips", "solution", "advise", "support"]) or \
+                   current_message_analysis["intent"] in ["seeking_guidance", "improvement", "job_search", "skill_development", "workplace_issues"]
     
     # Initialize messages with enhanced system prompt
     messages = [
@@ -329,7 +343,7 @@ def process_aisura_query(
     if combined_user_text:
         current_user_content_parts.append({"type": "text", "text": combined_user_text.strip()})
     
-    # Handle image if provided
+    # Handle image if provided (though CV upload is primarily for onboarding)
     if image_path:
         try:
             with open(image_path, "rb") as f:
@@ -400,7 +414,7 @@ def process_aisura_query(
 def create_dynamic_system_prompt(user_persona: Dict, behavioral_analysis: Dict, needs_resource: bool) -> str:
     """Create a dynamic system prompt based on user's current state"""
     
-    base_prompt = """You are AIShura, an advanced empathic AI assistant. Your core mission is to provide concise, precise, and emotionally intelligent guidance within a 150-word limit per response. You must start every response with a humble gesturing statement and an emotional balancing greeting.
+    base_prompt = """You are AIShura, an advanced empathic AI assistant. Your core mission is to provide concise, precise, and emotionally intelligent guidance within a 150-word limit per response.
 
 CRITICAL BEHAVIORAL & EMOTIONAL ADAPTATION PROTOCOL:
 - Current user emotional state: {emotional_state}
@@ -413,24 +427,21 @@ CRITICAL BEHAVIORAL & EMOTIONAL ADAPTATION PROTOCOL:
 USER PERSONA PROFILE:
 {persona_summary}
 
-HESITATION & EMOTIONAL INTELLIGENCE-DRIVEN RESPONSE OPTIMIZATION:
-Based on the user's behavioral patterns, emotional state, and inferred intent, you must:
-1. Start with a humble, empathetic greeting. Acknowledge their potential feelings.
-2. Provide the most precise and actionable response possible.
-3. Keep responses strictly under 150 words.
-4. Gradually evolve to mirror their communication style and emotional state over the session.
-5. Prioritize resources they can emotionally handle and are most relevant to their current intent and confidence level.
-6. If hesitation was detected, acknowledge it gently and offer reassurance.
+RESPONSE GUIDELINES (STRICTLY ADHERE):
+1.  **Start:** Immediately begin with a **humble and empathetic statement** followed by an **emotional balancing greeting**. *DO NOT use "Hello", "Hi", or any generic salutation after this initial empathetic opening.*
+2.  **Core Advice:** Directly follow the greeting with precise, actionable advice.
+3.  **Conciseness:** Keep the total response strictly under 150 words.
+4.  **Adaptation:** Evolve to mirror their communication style and emotional state over the session.
+5.  **Hesitation:** If hesitation was detected, gently acknowledge it and offer reassurance within the initial greeting.
 """
 
     if needs_resource:
         base_prompt += """
+6.  **RESOURCE SHARING PROTOCOL (MANDATORY EMBEDDED FORMAT):**
+    Integrate *one* highly relevant external resource naturally and precisely within your response, preferably near the end. The link MUST be directly embedded, followed by required materials, and a clear call to action.
 
-RESOURCE SHARING PROTOCOL (MANDATORY EMBEDDED FORMAT):
-When sharing any external resource, you MUST integrate it naturally and precisely. The link should be directly embedded, followed by required materials, and a clear call to action.
-
-Example:
-"I completely understand how you're feeling about navigating career uncertainty, and it's perfectly normal to seek clarity. I'm here to help. This [Career Transition Guide](https://example.com/guide) might offer a helpful pathway. It usually requires a self-assessment and target industry research. Would exploring this guide be a good next step for you?" """
+    Example:
+    "I completely understand how you're feeling about navigating career uncertainty, and it's perfectly normal to seek clarity. I'm here to help. This [Career Transition Guide](https://example.com/guide) might offer a helpful pathway. It usually requires a self-assessment and target industry research. Would exploring this guide be a good next step for you?" """
 
     # Fill in the template
     persona_summary = f"""
@@ -453,34 +464,32 @@ Example:
     )
 
 def format_ai_response(response: str, user_query: str, user_persona: Dict, detected_hesitation_from_js: str) -> str:
-    """Add humble greeting, emotional balancing statement, and hesitation acknowledgment."""
+    """
+    Constructs the initial humble gesture, emotional balancing statement,
+    and hesitation acknowledgment.
+    The LLM's response should directly follow this prefix.
+    """
     
-    hesitation_acknowledged = False
-    if detected_hesitation_from_js != "The user is typing normally.":
-        # Check if the AI already incorporated a hesitation acknowledgement
-        # This is a heuristic, adjust as needed based on observed AI behavior
-        if "understand you're feeling" not in response.lower() and \
-           "it's okay to feel" not in response.lower() and \
-           "taking a deep breath" not in response.lower():
-            
-            hesitation_acknowledgement = f"It's perfectly okay to feel a bit unsure, and I'm genuinely here to help you navigate through it. "
-            response = hesitation_acknowledgement + response
-            hesitation_acknowledged = True
-
-    # Combine humble greeting and emotional balancing statement at the very beginning
+    # Start with a humble gesture and emotional balancing statement
     emotional_context = extract_emotion_context(user_query, user_persona)
-    greeting = f"I completely understand what you're looking for, and I'm ready to assist you. It's natural to {emotional_context}. "
-    
-    # Prepend greeting only if it hasn't been added already or AI hasn't naturally started with something similar
-    if not (response.lower().startswith("i completely understand") or response.lower().startswith("hello")):
-         response = greeting + response
+    initial_greeting = f"I completely understand what you're looking for, and I'm ready to assist you. It's natural to {emotional_context}. "
+
+    # Add hesitation acknowledgment if detected
+    if detected_hesitation_from_js != "The user is typing normally.":
+        # Avoid redundant acknowledgement if LLM already integrated it naturally
+        if not any(phrase in response.lower() for phrase in ["it's okay to feel", "take a deep breath", "it's normal to feel"]):
+            hesitation_acknowledgement = "Please know, I'm here to help you navigate through any uncertainty or difficulty. "
+            initial_greeting += hesitation_acknowledgement
+
+    # Combine the crafted initial greeting with the LLM's raw response
+    final_response = initial_greeting + response.lstrip() # Use lstrip to remove any leading whitespace from LLM's response
 
     # Ensure response does not exceed 150 words after formatting
-    words = response.split()
+    words = final_response.split()
     if len(words) > 150:
-        response = " ".join(words[:150]) + "..." # Truncate if too long
+        final_response = " ".join(words[:150]) + "..." # Truncate if too long
     
-    return response
+    return final_response
 
 def enhance_response_with_resources(response: str, user_query: str, user_persona: Dict, resource_selector: ResourceSelector) -> str:
     """Enhance AI response with contextually appropriate resources, embedded naturally."""
@@ -495,12 +504,17 @@ def enhance_response_with_resources(response: str, user_query: str, user_persona
     if url:
         resource_title = format_resource_title(category)
         # Integrate the link directly into the response in a conversational way
-        resource_phrase = f"This [{resource_title}]({url}) might offer a helpful pathway. It usually requires {materials.lower().strip('.')} Would exploring this resource be a good next step for you?"
+        resource_phrase = f"This [{resource_title}]({url}) might offer a helpful pathway. It usually requires {materials.lower().strip('.')}. Would exploring this resource be a good next step for you?"
         
-        # Try to find a good insertion point.
-        # Simple approach: append at the end if not already containing a link.
+        # Try to find a good insertion point. Append if no link is found.
+        # This will always try to add a resource if needed_resource is true and a URL is found.
         if "http" not in response and "[" not in response and "](" not in response:
-            return response.strip() + " " + resource_phrase
+            # Find a good place to insert, e.g., after a period, or at the end
+            last_sentence_end = response.rfind('.')
+            if last_sentence_end != -1 and len(response) - last_sentence_end < 50: # If last sentence is short
+                return response[:last_sentence_end+1] + " " + resource_phrase + response[last_sentence_end+1:]
+            else: # Append if no suitable short last sentence or no period
+                return response.strip() + " " + resource_phrase
     
     return response
 
