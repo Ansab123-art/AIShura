@@ -317,6 +317,10 @@ elif st.session_state.onboarding_step == 3:
 
     submit_button = st.button("Get AIShura's Insight", type="primary", key="submit_button")
 
+    # Function to handle example clicks
+    def set_example_query(query_text):
+        st.session_state.user_query_input = query_text
+
     if submit_button and user_query:
         # Simulate hesitation data for demonstration.
         # In a real deployed app with st.components.v1.html, you'd get this from JS.
@@ -386,9 +390,8 @@ elif st.session_state.onboarding_step == 3:
     # and then rerun the app.
     for i, example in enumerate(examples):
         # Using a unique key for each button is crucial
-        if st.button(example, key=f"example_btn_{i}", help="Click to pre-fill the chat input with this query.", use_container_width=True): # Add use_container_width
-            st.session_state.user_query_input = example # Set text input
-            st.rerun()
+        st.button(example, key=f"example_btn_{i}", help="Click to pre-fill the chat input with this query.", on_click=set_example_query, args=(example,), use_container_width=True)
+
 
     # --- Dashboard (Sidebar or expandable section) ---
     with st.sidebar:
